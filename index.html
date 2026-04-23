@@ -191,6 +191,23 @@
       </button>
     </nav>
 
+    <!-- CHAT OVERLAY -->
+    <div id="chat-overlay" class="chat-overlay" aria-hidden="true">
+      <header class="chat-head">
+        <button id="chat-close" aria-label="Schließen">‹</button>
+        <div class="chat-title">
+          <h2>NEXUS</h2>
+          <span><span class="pulse"></span><span id="chat-state">online · denkt mit</span></span>
+        </div>
+        <button id="chat-reset" aria-label="Neu starten">↻</button>
+      </header>
+      <div id="chat-thread" class="chat-thread"></div>
+      <div class="chat-input-wrap">
+        <input type="text" id="chat-input" placeholder="Antworte oder frag nach …" autocomplete="off" />
+        <button id="chat-send" aria-label="Senden">→</button>
+      </div>
+    </div>
+
     <div class="home-indicator"></div>
   </div>
 

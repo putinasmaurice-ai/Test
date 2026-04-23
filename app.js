@@ -78,14 +78,21 @@ agentSuggestions.forEach((s, i) => {
       <button class="ac-btn primary">${s.primary}</button>
       <button class="ac-btn ghost">${s.ghost}</button>
     </div>`;
-  card.querySelector('.primary').addEventListener('click', () => {
+  card.querySelector('.primary').addEventListener('click', e => {
+    e.stopPropagation();
     card.style.transition = 'opacity .3s, transform .3s';
     card.style.opacity = '0';
     card.style.transform = 'translateX(40px)';
     setTimeout(() => card.remove(), 300);
   });
-  card.querySelector('.ghost').addEventListener('click', () => {
+  card.querySelector('.ghost').addEventListener('click', e => {
+    e.stopPropagation();
     card.style.opacity = '0.4';
+  });
+  // Tap card body → open chat seeded with this suggestion as context
+  card.addEventListener('click', () => {
+    chatReset();
+    chatOpen(`${s.icon} ${s.title}\n\n${s.body}`);
   });
   acEl.appendChild(card);
 });
@@ -104,11 +111,10 @@ activities.forEach(a => {
   al.appendChild(li);
 });
 
-// ---------- DeepSeek API helper ----------
+// ---------- DeepSeek API helpers ----------
 async function callDeepSeek({ messages, jsonSchema = null, temperature = 0.7, maxTokens = 1024 }) {
   const body = { messages, temperature, max_tokens: maxTokens };
   if (jsonSchema) body.response_format = { type: 'json_object' };
-
   const r = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -120,48 +126,163 @@ async function callDeepSeek({ messages, jsonSchema = null, temperature = 0.7, ma
   return jsonSchema ? JSON.parse(content) : content;
 }
 
+// Streaming via SSE. onDelta receives each token chunk; resolves to full text.
+async function streamDeepSeek({ messages, temperature = 0.7, maxTokens = 1024, onDelta, signal }) {
+  const r = await fetch('/api/chat/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages, temperature, max_tokens: maxTokens }),
+    signal
+  });
+  if (!r.ok || !r.body) {
+    let detail = 'Streaming nicht verfügbar';
+    try { detail = (await r.json()).error || detail; } catch {}
+    throw new Error(detail);
+  }
+  const reader = r.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let full = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf('\n\n')) !== -1) {
+      const event = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      for (const line of event.split('\n')) {
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === '[DONE]') continue;
+        try {
+          const json = JSON.parse(payload);
+          const delta = json?.choices?.[0]?.delta?.content || '';
+          if (delta) {
+            full += delta;
+            onDelta && onDelta(delta, full);
+          }
+        } catch { /* ignore non-JSON heartbeat */ }
+      }
+    }
+  }
+  return full;
+}
+
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[c]));
 }
 
-// Prompt input — wired to DeepSeek
-const AGENT_SYSTEM = `Du bist NEXUS, ein hochintelligenter persönlicher KI-Agent in einer modernen mobilen App.
-Du sprichst Deutsch, bist proaktiv, präzise und hilfreich.
-Antworte kurz und konkret (max. 3 Sätze), so wie man es auf einem Handy lesen will.
-Wenn die Anfrage eine Aktion erfordert, beschreibe was du autonom übernehmen würdest.`;
+// ---------- Chat overlay (multi-turn, streaming) ----------
+const AGENT_SYSTEM = `Du bist NEXUS, ein hochintelligenter persönlicher KI-Agent in einer modernen mobilen Life-OS App.
+Du sprichst Deutsch, bist proaktiv, präzise und warm.
+Antworten sind kompakt für ein Handy: kurze Absätze, idealerweise unter 4 Sätzen.
+Wenn eine Aktion sinnvoll wäre, beschreibe konkret, was du autonom übernehmen würdest, und biete eine Bestätigungs-Frage an.
+Du erinnerst dich an die laufende Konversation und beziehst dich auf vorher Gesagtes.`;
 
-async function submitPrompt() {
+const chat = {
+  overlay: document.getElementById('chat-overlay'),
+  thread: document.getElementById('chat-thread'),
+  input: document.getElementById('chat-input'),
+  send: document.getElementById('chat-send'),
+  state: document.getElementById('chat-state'),
+  messages: [],
+  busy: false,
+  abortCtrl: null
+};
+
+function chatOpen(seed) {
+  chat.overlay.classList.add('open');
+  chat.overlay.setAttribute('aria-hidden', 'false');
+  if (seed && chat.messages.length === 0) {
+    addBubble('assistant', seed);
+    chat.messages.push({ role: 'assistant', content: seed });
+  }
+  setTimeout(() => chat.input.focus(), 350);
+}
+
+function chatClose() {
+  chat.overlay.classList.remove('open');
+  chat.overlay.setAttribute('aria-hidden', 'true');
+  if (chat.abortCtrl) chat.abortCtrl.abort();
+}
+
+function chatReset() {
+  chat.messages = [];
+  chat.thread.innerHTML = '';
+  chat.input.value = '';
+  chat.state.textContent = 'online · denkt mit';
+}
+
+function addBubble(role, text) {
+  const el = document.createElement('div');
+  el.className = `bubble ${role}`;
+  el.textContent = text;
+  chat.thread.appendChild(el);
+  chat.thread.scrollTop = chat.thread.scrollHeight;
+  return el;
+}
+
+async function sendChat(userText) {
+  const text = (userText ?? chat.input.value).trim();
+  if (!text || chat.busy) return;
+  chat.input.value = '';
+  chat.busy = true;
+  chat.send.disabled = true;
+  chat.state.textContent = 'tippt …';
+
+  addBubble('user', text);
+  chat.messages.push({ role: 'user', content: text });
+
+  const bubble = addBubble('assistant', '');
+  bubble.innerHTML = '<span class="cursor"></span>';
+
+  chat.abortCtrl = new AbortController();
+
+  try {
+    const messages = [{ role: 'system', content: AGENT_SYSTEM }, ...chat.messages];
+    let assembled = '';
+    await streamDeepSeek({
+      messages,
+      temperature: 0.7,
+      maxTokens: 600,
+      signal: chat.abortCtrl.signal,
+      onDelta: (_delta, full) => {
+        assembled = full;
+        bubble.innerHTML = escapeHtml(full).replace(/\n/g, '<br>') + '<span class="cursor"></span>';
+        chat.thread.scrollTop = chat.thread.scrollHeight;
+      }
+    });
+    bubble.innerHTML = escapeHtml(assembled).replace(/\n/g, '<br>');
+    chat.messages.push({ role: 'assistant', content: assembled });
+  } catch (err) {
+    bubble.innerHTML = `<span style="color:var(--danger)">Fehler: ${escapeHtml(err.message)}</span>`;
+  } finally {
+    chat.busy = false;
+    chat.send.disabled = false;
+    chat.state.innerHTML = '<span class="pulse"></span><span>online · denkt mit</span>';
+  }
+}
+
+document.getElementById('chat-close').addEventListener('click', chatClose);
+document.getElementById('chat-reset').addEventListener('click', chatReset);
+chat.send.addEventListener('click', () => sendChat());
+chat.input.addEventListener('keydown', e => {
+  if (e.key === 'Enter') sendChat();
+});
+
+// Prompt bar on home → opens chat with that question
+function submitPrompt() {
   const inp = document.getElementById('prompt-input');
   const text = inp.value.trim();
   if (!text) return;
   inp.value = '';
-
-  const card = document.createElement('div');
-  card.className = 'agent-card';
-  card.innerHTML = `
-    <span class="ac-icon">💭</span>
-    <h3>"${escapeHtml(text)}"</h3>
-    <p><span class="pulse" style="display:inline-block;margin-right:8px"></span>NEXUS denkt nach …</p>`;
-  acEl.prepend(card);
-
-  try {
-    const reply = await callDeepSeek({
-      messages: [
-        { role: 'system', content: AGENT_SYSTEM },
-        { role: 'user', content: text }
-      ],
-      temperature: 0.7,
-      maxTokens: 400
-    });
-    card.querySelector('p').innerHTML = escapeHtml(reply).replace(/\n/g, '<br>');
-  } catch (err) {
-    card.querySelector('p').innerHTML =
-      `<span style="color:var(--danger)">Fehler: ${escapeHtml(err.message)}</span>`;
-  }
+  chatReset();
+  chatOpen();
+  sendChat(text);
 }
-
 document.getElementById('prompt-send').addEventListener('click', submitPrompt);
 document.getElementById('prompt-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') submitPrompt();

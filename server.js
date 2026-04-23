@@ -32,24 +32,42 @@ async function readBody(req) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-async function handleChat(req, res) {
+async function parseChatBody(req, res) {
   if (!API_KEY) {
-    return send(res, 500, JSON.stringify({
+    send(res, 500, JSON.stringify({
       error: 'DEEPSEEK_API_KEY ist nicht gesetzt. Starte mit: DEEPSEEK_API_KEY=sk-xxx node server.js'
     }), { 'Content-Type': 'application/json' });
+    return null;
   }
-
   let payload;
   try {
     payload = JSON.parse(await readBody(req));
   } catch {
-    return send(res, 400, JSON.stringify({ error: 'invalid JSON' }), { 'Content-Type': 'application/json' });
+    send(res, 400, JSON.stringify({ error: 'invalid JSON' }), { 'Content-Type': 'application/json' });
+    return null;
   }
+  if (!Array.isArray(payload.messages) || payload.messages.length === 0) {
+    send(res, 400, JSON.stringify({ error: 'messages required' }), { 'Content-Type': 'application/json' });
+    return null;
+  }
+  return payload;
+}
 
+function buildUpstreamBody(payload, stream) {
   const { messages, model, temperature, response_format, max_tokens } = payload;
-  if (!Array.isArray(messages) || messages.length === 0) {
-    return send(res, 400, JSON.stringify({ error: 'messages required' }), { 'Content-Type': 'application/json' });
-  }
+  return {
+    model: model || DEFAULT_MODEL,
+    messages,
+    temperature: temperature ?? 0.7,
+    max_tokens: max_tokens ?? 1024,
+    stream,
+    ...(response_format ? { response_format } : {})
+  };
+}
+
+async function handleChat(req, res) {
+  const payload = await parseChatBody(req, res);
+  if (!payload) return;
 
   try {
     const upstream = await fetch(`${API_BASE}/chat/completions`, {
@@ -58,20 +76,56 @@ async function handleChat(req, res) {
         'Authorization': `Bearer ${API_KEY}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        model: model || DEFAULT_MODEL,
-        messages,
-        temperature: temperature ?? 0.7,
-        max_tokens: max_tokens ?? 1024,
-        ...(response_format ? { response_format } : {})
-      })
+      body: JSON.stringify(buildUpstreamBody(payload, false))
     });
-
     const text = await upstream.text();
     res.writeHead(upstream.status, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(text);
   } catch (err) {
     send(res, 502, JSON.stringify({ error: 'upstream error', detail: String(err) }), { 'Content-Type': 'application/json' });
+  }
+}
+
+async function handleChatStream(req, res) {
+  const payload = await parseChatBody(req, res);
+  if (!payload) return;
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+
+  try {
+    const upstream = await fetch(`${API_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${API_KEY}`,
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream'
+      },
+      body: JSON.stringify(buildUpstreamBody(payload, true))
+    });
+
+    if (!upstream.ok || !upstream.body) {
+      const errText = await upstream.text().catch(() => 'upstream error');
+      res.write(`event: error\ndata: ${JSON.stringify({ error: errText })}\n\n`);
+      return res.end();
+    }
+
+    // Pipe SSE chunks straight through to the client
+    const reader = upstream.body.getReader();
+    const decoder = new TextDecoder();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(decoder.decode(value, { stream: true }));
+    }
+    res.end();
+  } catch (err) {
+    res.write(`event: error\ndata: ${JSON.stringify({ error: String(err) })}\n\n`);
+    res.end();
   }
 }
 
@@ -92,6 +146,7 @@ function serveStatic(req, res) {
 
 const server = http.createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/api/chat') return handleChat(req, res);
+  if (req.method === 'POST' && req.url === '/api/chat/stream') return handleChatStream(req, res);
   if (req.method === 'GET' && req.url === '/api/status') {
     return send(res, 200, JSON.stringify({ ok: true, hasKey: !!API_KEY, model: DEFAULT_MODEL }),
       { 'Content-Type': 'application/json' });
