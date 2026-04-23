@@ -1,0 +1,18 @@
+{
+  "name": "NEXUS — dein Leben, intelligent",
+  "short_name": "NEXUS",
+  "description": "Proaktiver KI-Agent + AR Lens + Decision Twin + Ambient Health + Memory Graph in einer App.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#05060d",
+  "theme_color": "#05060d",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

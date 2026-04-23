@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a14" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>NEXUS — dein Leben, intelligent</title>
+</head>
+<body>
+  <div id="phone-frame">
+    <div class="status-bar">
+      <span id="clock">09:41</span>
+      <div class="status-icons">
+        <span class="dot"></span>
+        <span>5G</span>
+        <span>100%</span>
+      </div>
+    </div>
+
+    <main id="app">
+      <!-- HOME / AGENT -->
+      <section class="screen active" data-screen="home">
+        <header class="hero">
+          <div class="hero-bg"></div>
+          <div class="greeting">
+            <p class="greet-time" id="greet">Guten Morgen,</p>
+            <h1>Maurice</h1>
+            <p class="status-line">
+              <span class="pulse"></span>
+              <span id="agent-status">12 Aufgaben heute autonom erledigt</span>
+            </p>
+          </div>
+        </header>
+
+        <div class="quick-stats">
+          <div class="stat">
+            <span class="stat-num">94</span>
+            <span class="stat-label">Energie</span>
+          </div>
+          <div class="stat">
+            <span class="stat-num">3.2h</span>
+            <span class="stat-label">gespart</span>
+          </div>
+          <div class="stat">
+            <span class="stat-num">€127</span>
+            <span class="stat-label">verhandelt</span>
+          </div>
+        </div>
+
+        <h2 class="section-title">Vorschläge des Agenten</h2>
+        <div class="agent-cards" id="agent-cards"></div>
+
+        <h2 class="section-title">Heute autonom erledigt</h2>
+        <ul class="activity-log" id="activity-log"></ul>
+
+        <div class="prompt-bar">
+          <input type="text" id="prompt-input" placeholder="Frag NEXUS irgendwas …" />
+          <button id="prompt-send" aria-label="Senden">→</button>
+        </div>
+      </section>
+
+      <!-- LENS -->
+      <section class="screen" data-screen="lens">
+        <div class="lens-viewfinder" id="viewfinder">
+          <div class="scan-line"></div>
+          <div class="lens-grid"></div>
+          <div class="targets" id="targets"></div>
+          <div class="lens-hint">Tippe auf einen Punkt um zu scannen</div>
+        </div>
+        <div class="lens-modes">
+          <button class="mode-btn active" data-mode="product">Produkt</button>
+          <button class="mode-btn" data-mode="contract">Vertrag</button>
+          <button class="mode-btn" data-mode="health">Haut</button>
+          <button class="mode-btn" data-mode="translate">Übersetzen</button>
+        </div>
+        <div class="lens-result" id="lens-result">
+          <div class="empty">Kamera bereit. Wähle einen Modus.</div>
+        </div>
+      </section>
+
+      <!-- TWIN -->
+      <section class="screen" data-screen="twin">
+        <header class="screen-header">
+          <h1>Decision Twin</h1>
+          <p>Simuliere Entscheidungen mit deinem digitalen Zwilling</p>
+        </header>
+
+        <div class="twin-input-wrap">
+          <textarea id="twin-input" placeholder="Soll ich…"></textarea>
+          <button id="twin-run">Simulieren</button>
+        </div>
+
+        <div class="twin-suggestions">
+          <button class="chip" data-q="Soll ich den Job in München annehmen?">Job München?</button>
+          <button class="chip" data-q="Soll ich das Tesla Model Y kaufen?">Tesla kaufen?</button>
+          <button class="chip" data-q="Soll ich mit Anna nach Lissabon ziehen?">Lissabon ziehen?</button>
+        </div>
+
+        <div class="twin-result" id="twin-result"></div>
+      </section>
+
+      <!-- SIGNAL -->
+      <section class="screen" data-screen="signal">
+        <header class="screen-header">
+          <h1>Signal</h1>
+          <p>Passive Gesundheit · Ambient Sensing</p>
+        </header>
+
+        <div class="signal-grid">
+          <div class="vital">
+            <div class="ring" data-pct="78"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="42"/><circle cx="50" cy="50" r="42" class="fg" id="ring-energy"/></svg><span>78</span></div>
+            <p>Energie</p>
+          </div>
+          <div class="vital">
+            <div class="ring" data-pct="34"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="42"/><circle cx="50" cy="50" r="42" class="fg" id="ring-stress"/></svg><span>34</span></div>
+            <p>Stress</p>
+          </div>
+          <div class="vital">
+            <div class="ring" data-pct="91"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="42"/><circle cx="50" cy="50" r="42" class="fg" id="ring-sleep"/></svg><span>91</span></div>
+            <p>Schlaf</p>
+          </div>
+        </div>
+
+        <div class="biomarker-card">
+          <div class="bio-head">
+            <h3>Stimm-Biomarker</h3>
+            <span class="badge ok">stabil</span>
+          </div>
+          <canvas id="voice-wave" width="600" height="120"></canvas>
+          <p class="bio-note">Frequenz, Jitter und Shimmer im Normbereich. Keine Hinweise auf Erschöpfung.</p>
+        </div>
+
+        <div class="alerts">
+          <h3>Frühwarnsystem</h3>
+          <div class="alert info">
+            <strong>Hydration ↓ 12%</strong>
+            <span>Trinke 250 ml in den nächsten 30 Min. — verhindert Konzentrationsabfall im 14:00 Meeting.</span>
+          </div>
+          <div class="alert warn">
+            <strong>HRV-Trend abfallend</strong>
+            <span>Letzte 4 Tage. Plane 20 Min Bewegung um 17:00 — Kalender ist frei.</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- CHRONO -->
+      <section class="screen" data-screen="chrono">
+        <header class="screen-header">
+          <h1>Chrono</h1>
+          <p>Dein durchsuchbares Gedächtnis</p>
+        </header>
+
+        <div class="chrono-search">
+          <input type="text" id="chrono-q" placeholder="Suche durch dein Leben …" />
+        </div>
+
+        <div class="chrono-suggestions">
+          <button class="chip" data-q="Anna Startup">"Anna Startup"</button>
+          <button class="chip" data-q="Wein Empfehlung">"Wein Empfehlung"</button>
+          <button class="chip" data-q="Arzt Termin">"Arzt Termin"</button>
+        </div>
+
+        <div class="timeline" id="timeline"></div>
+      </section>
+    </main>
+
+    <nav class="bottom-nav">
+      <button class="nav-btn active" data-target="home">
+        <svg viewBox="0 0 24 24"><path d="M12 3l9 8h-3v9h-4v-6h-4v6H6v-9H3z"/></svg>
+        <span>Agent</span>
+      </button>
+      <button class="nav-btn" data-target="lens">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="4"/><path d="M9 3l-2 3H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3l-2-3z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+        <span>Lens</span>
+      </button>
+      <button class="nav-btn" data-target="twin">
+        <svg viewBox="0 0 24 24"><path d="M12 2l3 6 6 .9-4.5 4.3 1 6.3L12 16.7 6.5 19.5l1-6.3L3 8.9 9 8z"/></svg>
+        <span>Twin</span>
+      </button>
+      <button class="nav-btn" data-target="signal">
+        <svg viewBox="0 0 24 24"><path d="M3 12h3l3-8 4 16 3-8h5"/></svg>
+        <span>Signal</span>
+      </button>
+      <button class="nav-btn" data-target="chrono">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 7v5l3 2"/></svg>
+        <span>Chrono</span>
+      </button>
+    </nav>
+
+    <div class="home-indicator"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
