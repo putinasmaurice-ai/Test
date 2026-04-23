@@ -104,18 +104,67 @@ activities.forEach(a => {
   al.appendChild(li);
 });
 
-// Prompt input
-document.getElementById('prompt-send').addEventListener('click', () => {
+// ---------- DeepSeek API helper ----------
+async function callDeepSeek({ messages, jsonSchema = null, temperature = 0.7, maxTokens = 1024 }) {
+  const body = { messages, temperature, max_tokens: maxTokens };
+  if (jsonSchema) body.response_format = { type: 'json_object' };
+
+  const r = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || 'API-Fehler');
+  const content = data?.choices?.[0]?.message?.content ?? '';
+  return jsonSchema ? JSON.parse(content) : content;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+// Prompt input — wired to DeepSeek
+const AGENT_SYSTEM = `Du bist NEXUS, ein hochintelligenter persönlicher KI-Agent in einer modernen mobilen App.
+Du sprichst Deutsch, bist proaktiv, präzise und hilfreich.
+Antworte kurz und konkret (max. 3 Sätze), so wie man es auf einem Handy lesen will.
+Wenn die Anfrage eine Aktion erfordert, beschreibe was du autonom übernehmen würdest.`;
+
+async function submitPrompt() {
   const inp = document.getElementById('prompt-input');
-  if (!inp.value.trim()) return;
+  const text = inp.value.trim();
+  if (!text) return;
+  inp.value = '';
+
   const card = document.createElement('div');
   card.className = 'agent-card';
   card.innerHTML = `
     <span class="ac-icon">💭</span>
-    <h3>"${inp.value}"</h3>
-    <p>NEXUS plant deine Anfrage. Ergebnis erscheint hier in Kürze …</p>`;
+    <h3>"${escapeHtml(text)}"</h3>
+    <p><span class="pulse" style="display:inline-block;margin-right:8px"></span>NEXUS denkt nach …</p>`;
   acEl.prepend(card);
-  inp.value = '';
+
+  try {
+    const reply = await callDeepSeek({
+      messages: [
+        { role: 'system', content: AGENT_SYSTEM },
+        { role: 'user', content: text }
+      ],
+      temperature: 0.7,
+      maxTokens: 400
+    });
+    card.querySelector('p').innerHTML = escapeHtml(reply).replace(/\n/g, '<br>');
+  } catch (err) {
+    card.querySelector('p').innerHTML =
+      `<span style="color:var(--danger)">Fehler: ${escapeHtml(err.message)}</span>`;
+  }
+}
+
+document.getElementById('prompt-send').addEventListener('click', submitPrompt);
+document.getElementById('prompt-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') submitPrompt();
 });
 
 // ---------- Lens ----------
@@ -225,91 +274,97 @@ document.querySelectorAll('.mode-btn').forEach(b => {
 });
 renderTargets();
 
-// ---------- Twin ----------
-const twinScenarios = {
-  job: {
-    score: 72,
-    label: 'EHER JA — mit 2 Bedingungen',
-    text: 'Basierend auf deinen letzten 5 Jahren: dein Glücks-Score steigt bei +20% Verantwortung, sinkt bei >45 Min Pendelzeit. Finanziell signifikant positiv.',
-    factors: [
-      ['Finanzieller Impact (5 Jahre)', 88, '+€94k'],
-      ['Karriere-Trajektorie', 81, '+2.4 Stufen'],
-      ['Lebensqualität (simuliert)', 54, '−6%'],
-      ['Beziehungs-Stabilität', 62, '−12%'],
-      ['Stress-Forecast', 45, '+18%']
-    ]
-  },
-  tesla: {
-    score: 38,
-    label: 'EHER NEIN',
-    text: 'Du fährst 4.200 km/Jahr. TCO über 5 Jahre: €38k vs. €19k Carsharing. Bei deinem Pendelmuster ist Leasing sinnvoller. In 18 Monaten kommt Modell mit deinen Wunschfeatures.',
-    factors: [
-      ['Finanzieller Impact', 22, '−€19k'],
-      ['Praktischer Nutzen', 51, 'mittel'],
-      ['Emotionale Erfüllung', 78, 'hoch'],
-      ['Opportunitätskosten', 28, 'hoch'],
-      ['Wiederverkaufswert', 44, 'unsicher']
-    ]
-  },
-  lisbon: {
-    score: 65,
-    label: 'POSITIV — gut durchdacht',
-    text: 'Annas Karriere-Match in Lissabon ist 87%. Deine Remote-Arbeit ist kompatibel. Lebenshaltungskosten −22%. Hauptsorge: Familiennähe. Vorschlag: 6-Monats-Probelauf.',
-    factors: [
-      ['Beziehungs-Score', 89, '+stark'],
-      ['Karriere (Anna)', 87, '+stark'],
-      ['Karriere (du)', 72, 'neutral'],
-      ['Kosten Lebenshaltung', 78, '−22%'],
-      ['Soziales Netz', 41, '−mittel']
-    ]
-  }
-};
+// ---------- Twin (DeepSeek-powered) ----------
+const TWIN_SYSTEM = `Du bist "Decision Twin" — ein digitaler Entscheidungs-Zwilling in einer modernen Life-OS App.
+Du analysierst Lebensentscheidungen wie ein scharfsinniger, ehrlicher Mentor mit Daten-Mindset.
+Du musst IMMER mit gültigem JSON antworten, exakt nach diesem Schema:
 
-function detectScenario(q) {
-  const s = q.toLowerCase();
-  if (s.includes('job') || s.includes('münchen') || s.includes('arbeit')) return 'job';
-  if (s.includes('tesla') || s.includes('auto') || s.includes('kauf')) return 'tesla';
-  if (s.includes('lissabon') || s.includes('zieh') || s.includes('umzug')) return 'lisbon';
-  return 'job';
+{
+  "score": <Zahl 0-100, wie sehr du diese Entscheidung empfiehlst>,
+  "label": "<kurzes Verdict in Großbuchstaben, max 6 Wörter, z.B. 'EHER JA — mit Bedingungen'>",
+  "text": "<2-3 Sätze auf Deutsch mit konkreter Begründung>",
+  "factors": [
+    { "name": "<Faktor-Name>", "value": <0-100>, "note": "<kurzer Wert, z.B. '+€94k', 'mittel', '-22%'>" }
+  ],
+  "monteCarlo": "<1 Satz auf Deutsch mit Monte-Carlo-Aussage zur Wahrscheinlichkeit>"
 }
 
-function renderTwin(scenarioKey) {
-  const data = twinScenarios[scenarioKey];
+Liefere genau 5 Faktoren. Sei spezifisch und nutze realistische Zahlen.`;
+
+function renderTwinResult(data) {
   const el = document.getElementById('twin-result');
+  const factors = (data.factors || []).slice(0, 5);
   el.innerHTML = `
     <div class="twin-card twin-verdict">
       <h3>Verdict des Twins</h3>
-      <div class="verdict-score">${data.score}</div>
-      <div class="verdict-label">${data.label}</div>
-      <p class="verdict-text">${data.text}</p>
+      <div class="verdict-score">${data.score ?? '–'}</div>
+      <div class="verdict-label">${escapeHtml(data.label || '')}</div>
+      <p class="verdict-text">${escapeHtml(data.text || '')}</p>
     </div>
     <div class="twin-card">
       <h3>Faktoren-Analyse</h3>
-      ${data.factors.map(([name, val, note]) => `
+      ${factors.map(f => `
         <div class="factor-row">
-          <span style="flex:0 0 40%;font-size:13px">${name}</span>
-          <div class="factor-bar"><span style="width:${val}%"></span></div>
-          <span class="factor-val">${note}</span>
+          <span style="flex:0 0 40%;font-size:13px">${escapeHtml(f.name)}</span>
+          <div class="factor-bar"><span style="width:${Math.max(0, Math.min(100, f.value))}%"></span></div>
+          <span class="factor-val">${escapeHtml(f.note ?? '')}</span>
         </div>
       `).join('')}
     </div>
     <div class="twin-card">
       <h3>Monte-Carlo · 10.000 Simulationen</h3>
       <p style="font-size:13px;color:var(--text-dim);line-height:1.6;margin:0">
-        In <strong style="color:var(--ok)">${data.score}%</strong> der simulierten Lebensverläufe liegt dein gewichteter Glücks-Score in 5 Jahren über dem Status quo. Median-Outcome ist <strong>positiv</strong>.
+        ${escapeHtml(data.monteCarlo || '')}
       </p>
     </div>`;
 }
 
+function renderTwinLoading(question) {
+  document.getElementById('twin-result').innerHTML = `
+    <div class="twin-card">
+      <h3>Twin simuliert …</h3>
+      <p style="font-size:13px;color:var(--text-dim);margin:0">
+        <span class="pulse" style="display:inline-block;margin-right:8px"></span>
+        Analysiere "${escapeHtml(question)}" gegen dein Profil und 10.000 mögliche Lebensverläufe.
+      </p>
+    </div>`;
+}
+
+function renderTwinError(msg) {
+  document.getElementById('twin-result').innerHTML = `
+    <div class="twin-card">
+      <h3>Fehler</h3>
+      <p style="font-size:13px;color:var(--danger);margin:0">${escapeHtml(msg)}</p>
+    </div>`;
+}
+
+async function runTwin(question) {
+  const q = (question || '').trim();
+  if (!q) return;
+  renderTwinLoading(q);
+  try {
+    const data = await callDeepSeek({
+      messages: [
+        { role: 'system', content: TWIN_SYSTEM },
+        { role: 'user', content: q }
+      ],
+      jsonSchema: true,
+      temperature: 0.6,
+      maxTokens: 800
+    });
+    renderTwinResult(data);
+  } catch (err) {
+    renderTwinError(err.message);
+  }
+}
+
 document.getElementById('twin-run').addEventListener('click', () => {
-  const q = document.getElementById('twin-input').value;
-  if (!q.trim()) return;
-  renderTwin(detectScenario(q));
+  runTwin(document.getElementById('twin-input').value);
 });
 document.querySelectorAll('.twin-suggestions .chip').forEach(c => {
   c.addEventListener('click', () => {
     document.getElementById('twin-input').value = c.dataset.q;
-    renderTwin(detectScenario(c.dataset.q));
+    runTwin(c.dataset.q);
   });
 });
 
